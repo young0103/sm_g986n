@@ -2,7 +2,9 @@ version: 2.1
 
 executors:
   kernel-exec:
-    docker: [ { image: ubuntu:24.04 } ]
+    docker:
+      - image: cimg/base:stable   # 그대로 사용
+        user: root                # ← apt 를 바로 실행하기 위해 root 로
     environment:
       DEBIAN_FRONTEND: noninteractive
       TZ: Etc/UTC
@@ -13,48 +15,52 @@ jobs:
     steps:
       - checkout
 
-      # 1. 설치
+      # 1) 필수 패키지 설치 (sudo 불필요)
       - run:
-          name: Install prerequisites
+          name: Install build prerequisites
           command: |
-            sudo apt-get update
-            sudo apt-get install -y build-essential bc git curl python3 lz4 cpio flex bison \
-                                     zstd rsync libncurses-dev libssl-dev elfutils-libelf-dev
+            apt-get update
+            apt-get install -y build-essential bc git curl python3 lz4 cpio flex bison \
+                               zstd rsync libncurses-dev libssl-dev elfutils-libelf-dev
 
-      # 2. Neutron‑Clang 18
+      # 2) Neutron‑Clang + glibc 패치
       - run:
-          name: Fetch Neutron‑Clang
+          name: Fetch toolchain & add portable GLIBC
           command: |
             set -eux
-            TC_DIR=$HOME/toolchains/neutron-clang
-            mkdir -p "$TC_DIR" && cd "$TC_DIR"
+            TC=$HOME/toolchains/neutron-clang
+            mkdir -p "$TC" && cd "$TC"
             curl -sL https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman -o antman
             chmod +x antman
-            ./antman -S stable
+            ./antman -S stable              # 툴체인 본체
+            ./antman --patch=glibc          # ★ GLIBC 2.38 포팅
             echo 'export PATH=$HOME/toolchains/neutron-clang/bin:$PATH' >> $BASH_ENV
 
-      # 3. 빌드
+      # 3) 커널 빌드 (한 줄 export → 한 줄 make)
       - run:
-          name: Build Samsung SM‑G986N (y2q) kernel
+          name: Build y2q kernel
           command: |
             set -eux
             source $BASH_ENV
-            export ARCH=arm64 LLVM=1
-            export CC=clang
-            export CROSS_COMPILE=aarch64-linux-gnu-
-            export CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
             OUT=$PWD/out
-            mkdir -p "$OUT"
-            make O=$OUT vendor/y2q_kor_singlex_defconfig
-            make -j"$(nproc)" O=$OUT
+            make O=$OUT ARCH=arm64 LLVM=1 CC=clang \
+                 CROSS_COMPILE=aarch64-linux-gnu- \
+                 CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
+                 vendor/y2q_kor_singlex_defconfig
+            make  -j"$(nproc)" \
+                 O=$OUT ARCH=arm64 LLVM=1 CC=clang \
+                 CROSS_COMPILE=aarch64-linux-gnu- \
+                 CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
 
-      # 4. 결과 저장
+      # 4) 결과물 보존
       - store_artifacts:
           path: out/arch/arm64/boot/Image.gz-dtb
           destination: kernel-image
+
 
 workflows:
   version: 2
   build-and-store:
     jobs:
       - build-kernel
+
