@@ -21,8 +21,9 @@ jobs:
           command: |
             apt-get update
             apt-get install -y \
-              build-essential bc git curl python3 lz4 cpio flex bison \
-              zstd rsync libncurses-dev libssl-dev libelf-dev
+              build-essential bc git curl python3 lz4 cpio flex bison zstd rsync \
+              libncurses-dev libssl-dev \
+              gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
 
       # 2) Neutron‑Clang + glibc 패치
       - run:
@@ -64,5 +65,6 @@ workflows:
   build-and-store:
     jobs:
       - build-kernel
+
 
 
