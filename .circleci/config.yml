@@ -1,63 +1,98 @@
-# ====================================================================
-#  Samsung Galaxy S20+ (SM‑G986N) 커널 — Neutron 18 자동 빌드 파이프라인
-# ====================================================================
-# .circleci/config.yml
+# ----------------------------------------------------------------------
+#  .circleci/config.yml  ―  Galaxy S20+ (SM‑G986N, y2q) kernel build
+# ----------------------------------------------------------------------
 version: 2.1
 
 executors:
-  kernel-exec:
+  kernel-executor:
     docker:
-      - image: cimg/base:stable
+      - image: cimg/base:stable            # Ubuntu 22.04 기반
     environment:
       DEBIAN_FRONTEND: noninteractive
       TZ: Etc/UTC
 
 jobs:
-  build-kernel:
-    executor: kernel-exec
+  build-y2q-kernel:
+    executor: kernel-executor
     steps:
-      # 1) 필수 패키지 설치 -----------------------------
-      - run:
-          name: Install build prerequisites
-          command: |
-            sudo apt-get update
-            sudo apt-get install -y \
-              build-essential bc git curl python3 lz4 cpio flex bison \
-              zstd                    # ← 반드시 추가
-      # 2) 나머지 단계는 동일 ………………………………
+    # ────────────────────────────────────────────────────────────────
+    # 1) 저장소 체크아웃
+    # ────────────────────────────────────────────────────────────────
+    - checkout
 
-      # -------------- fetch toolchain -----------------
-      - run:
-          name: Fetch Neutron‑Clang
-          command: |
-            set -eux
-            TC_DIR=$HOME/toolchains/neutron-clang
-            mkdir -p "$TC_DIR" && cd "$TC_DIR"
-            curl -sL https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman -o antman
-            chmod +x antman
-            ./antman -S stable        # or "-S latest"
-            echo 'export PATH=$HOME/toolchains/neutron-clang/bin:$PATH' >> $BASH_ENV
-      # -------------- build kernel --------------------
-      - run:
-          name: Build y2q kernel
-          command: |
-            set -eux
-            source $BASH_ENV
-            cd kernel                              # repo root you checked‑out
-            export ARCH=arm64 LLVM=1 CC=clang
-            export CROSS_COMPILE=aarch64-linux-gnu-
-            export CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
-            make vendor/y2q_kor_singlex_defconfig
-            make -j"$(nproc)"
-      # -------------- artifacts -----------------------
-      - store_artifacts:
-          path: kernel/out/arch/arm64/boot/Image.gz-dtb
-          destination: kernel-image
+    # ────────────────────────────────────────────────────────────────
+    # 2) 필수 도구 설치 (zstd 포함)
+    # ────────────────────────────────────────────────────────────────
+    - run:
+        name: Install build dependencies
+        command: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential ca-certificates cpio curl flex \
+            git libssl-dev lz4 python3 unzip wget xz-utils zstd
+
+    # ────────────────────────────────────────────────────────────────
+    # 3) Neutron‑Clang 18 toolchain 받아오기
+    # ────────────────────────────────────────────────────────────────
+    - run:
+        name: Fetch Neutron‑Clang 18
+        command: |
+          set -eux
+          TC=$HOME/toolchains/neutron-clang
+          mkdir -p "$TC" && cd "$TC"
+
+          curl -sL https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman -o antman
+          chmod +x antman
+          # stable 대신 latest 를 원하면 -S latest 로
+          ./antman -S stable
+
+          echo 'export PATH=$HOME/toolchains/neutron-clang/bin:$PATH' >> $BASH_ENV
+
+    # ────────────────────────────────────────────────────────────────
+    # 4) 커널 빌드
+    # ────────────────────────────────────────────────────────────────
+    - run:
+        name: Build kernel (Image.gz‑dtb)
+        command: |
+          set -eux
+          source $BASH_ENV          # PATH 갱신
+
+          # ── 공통 환경변수 한곳에 묶어두기 ─────────────────────
+          export ARCH=arm64
+          export LLVM=1 CC=clang
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
+
+          # ── out 디렉터리 분리 (권장) ──────────────────────────
+          OUT_DIR=$PWD/out
+          mkdir -p "$OUT_DIR"
+
+          # ── ① defconfig ───────────────────────────────────────
+          make -j"$(nproc)" \
+            O=$OUT_DIR \
+            ARCH=$ARCH LLVM=$LLVM CC=$CC \
+            CROSS_COMPILE=$CROSS_COMPILE CROSS_COMPILE_COMPAT=$CROSS_COMPILE_COMPAT \
+            vendor/y2q_kor_singlex_defconfig
+
+          # ── ② 실제 빌드 ───────────────────────────────────────
+          make -j"$(nproc)" \
+            O=$OUT_DIR \
+            ARCH=$ARCH LLVM=$LLVM CC=$CC \
+            CROSS_COMPILE=$CROSS_COMPILE CROSS_COMPILE_COMPAT=$CROSS_COMPILE_COMPAT
+
+          # 결과물이 out/arch/arm64/boot/Image.gz-dtb 에 생성됨
+          ls -lh $OUT_DIR/arch/arm64/boot/Image* || {
+            echo "❌  Image.gz‑dtb 가 생성되지 않았습니다."; exit 1; }
+
+    # ────────────────────────────────────────────────────────────────
+    # 5) 아티팩트 업로드
+    # ────────────────────────────────────────────────────────────────
+    - store_artifacts:
+        path: out/arch/arm64/boot/Image.gz-dtb
+        destination: Image.gz-dtb
 
 workflows:
   version: 2
-  build-and-store:
+  nightly-build:
     jobs:
-
-      - build-kernel
-
+      - build-y2q-kernel
