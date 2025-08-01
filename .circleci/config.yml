@@ -46,14 +46,19 @@ jobs:
             set -eux
             source $BASH_ENV
             OUT=$PWD/out
+
+            # ① defconfig
             make O=$OUT ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang \
                  CROSS_COMPILE=aarch64-linux-gnu- \
                  CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
                  vendor/y2q_kor_singlex_defconfig
-            make  -j"$(nproc)" \
-                 O=$OUT ARCH=arm64 LLVM=1 CC=clang \
+
+            # ②
+            make -j"$(nproc)" \
+                 O=$OUT ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang \
                  CROSS_COMPILE=aarch64-linux-gnu- \
-                 CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
+                 CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
+                 HOSTCC=gcc HOSTCXX=g++
 
       # 4) 결과물 보존
       - store_artifacts:
@@ -66,6 +71,7 @@ workflows:
   build-and-store:
     jobs:
       - build-kernel
+
 
 
 
