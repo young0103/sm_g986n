@@ -45,7 +45,7 @@ jobs:
             set -eux
             source $BASH_ENV
             OUT=$PWD/out
-            make O=$OUT ARCH=arm64 LLVM=1 CC=clang \
+            make O=$OUT ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang \
                  CROSS_COMPILE=aarch64-linux-gnu- \
                  CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
                  vendor/y2q_kor_singlex_defconfig
@@ -65,6 +65,7 @@ workflows:
   build-and-store:
     jobs:
       - build-kernel
+
 
 
 
