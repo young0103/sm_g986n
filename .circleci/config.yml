@@ -1,13 +1,14 @@
+# .circleci/config.yml
 version: 2.1
 
 executors:
   kernel-exec:
     docker:
-      - image: cimg/base:stable   # 그대로 사용
-        user: root                # ← apt 를 바로 실행하기 위해 root 로
+      - image: cimg/base:stable
+        user: root                    # apt 를 root 로 직접 실행
     environment:
       DEBIAN_FRONTEND: noninteractive
-      TZ: Etc/UTC
+      TZ:   Etc/UTC
 
 jobs:
   build-kernel:
@@ -15,7 +16,9 @@ jobs:
     steps:
       - checkout
 
-      # 1) 필수 패키지 설치 (sudo 불필요)
+      # ─────────────────────────────────────────────────────────────
+      # 1. 필수 패키지
+      # ─────────────────────────────────────────────────────────────
       - run:
           name: Install build prerequisites
           command: |
@@ -26,54 +29,57 @@ jobs:
               gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
               binutils-arm-linux-gnueabi
 
-      # 2) Neutron‑Clang + glibc 패치
+      # ─────────────────────────────────────────────────────────────
+      # 2. Neutron‑Clang + GLIBC patch (antman)
+      # ─────────────────────────────────────────────────────────────
       - run:
-          name: Fetch toolchain & add portable GLIBC
+          name: Fetch toolchain & portable GLIBC
           command: |
             set -eux
-            TC=$HOME/toolchains/neutron-clang
-            mkdir -p "$TC" && cd "$TC"
+            TC_DIR="$HOME/toolchains/neutron-clang"
+            mkdir -p "$TC_DIR" && cd "$TC_DIR"
             curl -sL https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman -o antman
             chmod +x antman
-            ./antman -S stable              # 툴체인 본체
-            ./antman --patch=glibc          # ★ GLIBC 2.38 포팅
-            echo 'export PATH=$HOME/toolchains/neutron-clang/bin:$PATH' >> $BASH_ENV
+            ./antman -S stable          # 본체
+            ./antman --patch=glibc      # libc 2.38 포팅
+            echo 'export PATH=$HOME/toolchains/neutron-clang/bin:$PATH' >> "$BASH_ENV"
 
-      # 3) 커널 빌드 (한 줄 export → 한 줄 make)
+      # ─────────────────────────────────────────────────────────────
+      # 3. 커널  빌드  (변수는 ★반드시★ make 명령행에 직접 전달)
+      # ─────────────────────────────────────────────────────────────
       - run:
-          name: Build y2q kernel
+          name: Build y2q kernel
           command: |
             set -eux
-            source $BASH_ENV
-            OUT=$PWD/out
+            source "$BASH_ENV"
+            OUT_DIR="$PWD/out"
 
-            # ① defconfig
-            make O=$OUT ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang \
-                 CROSS_COMPILE=aarch64-linux-gnu- \
-                 CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
-                 vendor/y2q_kor_singlex_defconfig
+            # 3‑1) defconfig
+            make \
+              O="$OUT_DIR" \
+              ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang \
+              CROSS_COMPILE=aarch64-linux-gnu- \
+              CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
+              CLANG_TRIPLE=aarch64-linux-gnu- \
+              vendor/y2q_kor_singlex_defconfig
 
-            # ②
+            # 3‑2) 실제 컴파일
             make -j"$(nproc)" \
-                 O=$OUT ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang \
-                 CROSS_COMPILE=aarch64-linux-gnu- \
-                 CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
-                 HOSTCC=gcc HOSTCXX=g++
+              O="$OUT_DIR" \
+              ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang \
+              CROSS_COMPILE=aarch64-linux-gnu- \
+              CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
+              CLANG_TRIPLE=aarch64-linux-gnu-
 
-      # 4) 결과물 보존
+      # ─────────────────────────────────────────────────────────────
+      # 4. 결과물  보존
+      # ─────────────────────────────────────────────────────────────
       - store_artifacts:
-          path: out/arch/arm64/boot/Image.gz-dtb
+          path:     out/arch/arm64/boot/Image.gz-dtb
           destination: kernel-image
-
 
 workflows:
   version: 2
   build-and-store:
     jobs:
       - build-kernel
-
-
-
-
-
-
