@@ -1,27 +1,31 @@
 # ====================================================================
 #  Samsung Galaxy S20+ (SM‑G986N) 커널 — Neutron 18 자동 빌드 파이프라인
 # ====================================================================
-
+# .circleci/config.yml
 version: 2.1
+
 executors:
   kernel-exec:
-    docker: [{image: cimg/base:stable}]
+    docker:
+      - image: cimg/base:stable
     environment:
-      TZ: Etc/UTC
       DEBIAN_FRONTEND: noninteractive
+      TZ: Etc/UTC
 
 jobs:
   build-kernel:
     executor: kernel-exec
     steps:
-      - checkout
-      # ------------------------------------------------
+      # 1) 필수 패키지 설치 -----------------------------
       - run:
-          name: Install build dependencies
+          name: Install build prerequisites
           command: |
             sudo apt-get update
-            sudo apt-get install -y build-essential bc bison flex libssl-dev \
-              dwarves git curl xz-utils python3
+            sudo apt-get install -y \
+              build-essential bc git curl python3 lz4 cpio flex bison \
+              zstd                    # ← 반드시 추가
+      # 2) 나머지 단계는 동일 ………………………………
+
       # -------------- fetch toolchain -----------------
       - run:
           name: Fetch Neutron‑Clang
@@ -56,3 +60,4 @@ workflows:
     jobs:
 
       - build-kernel
+
