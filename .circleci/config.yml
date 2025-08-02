@@ -39,33 +39,26 @@ jobs:
           command: |
             set -eux
             source "$BASH_ENV"
-    
-            # 교차 binutils(ELF 32/64) 를 우선 검색
-            export PATH="/usr/aarch64-linux-gnu/bin:/usr/arm-linux-gnueabi/bin:$PATH"
-    
+
             OUT=$PWD/out
             NPROC=$(nproc)
-    
-            # ── ① defconfig ───────────────────────────────────────
+
+            # ── ① defconfig ───────────────────────────────
             make O=$OUT \
                  ARCH=arm64 LLVM=1 LLVM_IAS=1 \
                  CC=clang LD=ld.lld \
                  CLANG_TRIPLE=aarch64-linux-gnu- \
                  CROSS_COMPILE=aarch64-linux-gnu- \
                  CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
-                 AS=aarch64-linux-gnu-as \
-                 AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy \
                  vendor/y2q_kor_singlex_defconfig
-    
-            # ── ② 풀 빌드  (Host toolchain은 **기본 gcc** 사용) ──
+
+            # ── ② 전체 빌드 ───────────────────────────────
             make -j$NPROC O=$OUT \
                  ARCH=arm64 LLVM=1 LLVM_IAS=1 \
                  CC=clang LD=ld.lld \
                  CLANG_TRIPLE=aarch64-linux-gnu- \
                  CROSS_COMPILE=aarch64-linux-gnu- \
                  CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
-                 AS=aarch64-linux-gnu-as \
-                 AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy \
                  HOSTCC=gcc HOSTCXX=g++
 
       # 4) 결과물 저장 ──────────────────────────────────────
@@ -78,3 +71,4 @@ workflows:
   build-and-store:
     jobs:
       - build-kernel
+
