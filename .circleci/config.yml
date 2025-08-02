@@ -22,16 +22,15 @@ jobs:
             apt-get update -y
             apt-get install -y \
               build-essential bc git curl python3 lz4 cpio flex bison zstd rsync \
-              libncurses-dev libssl-dev \
-              gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-              binutils-arm-linux-gnueabi
+              libncurses-dev libssl-dev
 
       # 2. Neutron‑Clang + GLIBC 패치
       - run:
           name: Fetch Neutron‑Clang (with portable glibc)
           command: |
             set -eux
-            TC="$HOME/toolchains/neutron-clang"
+            TC=$HOME/toolchains/neutron-clang
+            echo "export PATH=$TC/bin:$PATH" >> $BASH_ENV
             mkdir -p "$TC" && cd "$TC"
             curl -sL https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman -o antman
             chmod +x antman
@@ -45,22 +44,22 @@ jobs:
           command: |
             set -eux
             source "$BASH_ENV"
-
+            CROSS_COMPILE=aarch64-linux-android-
+            CROSS_COMPILE_COMPAT=arm-linux-androideabi-
             OUT_DIR=$PWD/out
 
-            # --- ① defconfig -------------------------------------------------
-            make -C $PWD O="$OUT_DIR" \
-                 ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang \
-                 CROSS_COMPILE=aarch64-linux-gnu- \
-                 CLANG_TRIPLE=aarch64-linux-gnu- \
+            make O=$OUT HOSTCC=gcc HOSTCXX=g++ \
+                 CC=clang LD=ld.lld \
+                 ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+                 CROSS_COMPILE=${CROSS_COMPILE} \
                  vendor/y2q_kor_singlex_defconfig
-
-            # --- ② full build -----------------------------------------------
-            make -C $PWD -j"$(nproc)" O="$OUT_DIR" \
-                 ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang \
-                 CROSS_COMPILE=aarch64-linux-gnu- \
-                 CLANG_TRIPLE=aarch64-linux-gnu- \
-                 HOSTCC=gcc HOSTCXX=g++
+            
+            make -j$(nproc) O=$OUT \
+                 HOSTCC=gcc HOSTCXX=g++ \
+                 CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip \
+                 ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+                 CROSS_COMPILE=${CROSS_COMPILE} \
+                 CROSS_COMPILE_COMPAT=${CROSS_COMPILE_COMPAT}
 
       # 4. 결과물 저장
       - store_artifacts:
@@ -72,3 +71,4 @@ workflows:
   build-and-store:
     jobs:
       - build-kernel
+
