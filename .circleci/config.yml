@@ -3,7 +3,7 @@ version: 2.1
 executors:
   kernel-exec:
     docker:
-      - image: cimg/base:stable
+      - image: cimg/base:stable        # Ubuntu 20.04
         user: root
     environment:
       DEBIAN_FRONTEND: noninteractive
@@ -13,52 +13,102 @@ jobs:
   build-kernel:
     executor: kernel-exec
     steps:
+      # ─────────────────────────────────────────────
+      # 0) 소스 체크아웃
+      # ─────────────────────────────────────────────
       - checkout
+
+      # ─────────────────────────────────────────────
+      # 1) 필수 패키지(호스트용) 설치
+      #    ‑‑ binutils / gcc 크로스 툴체인은 apt로 넣지 않습니다
+      # ─────────────────────────────────────────────
       - run:
-          name: Install packages
+          name: Install host‑side prerequisites
           command: |
             apt-get update -y
             apt-get install -y \
               build-essential bc git curl python-is-python3 \
-              lz4 cpio flex bison zstd libncurses-dev libssl-dev \
-              gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-              gcc-arm-linux-gnueabi binutils-arm-linux-gnueabi
+              lz4 cpio flex bison zstd \
+              libncurses-dev libssl-dev
+
+      # ─────────────────────────────────────────────
+      # 2) 최신 Linaro cross‑binutils 가져오기  🔑 추가
+      # ─────────────────────────────────────────────
       - run:
-          name: Fetch Neutron‑Clang
+          name: Install up‑to‑date cross‑binutils (Linaro 2023.09)
           command: |
             set -eux
-            TC="$HOME/toolchains/neutron-clang"
-            mkdir -p "$TC" && cd "$TC"
+            CDN=https://releases.linaro.org/components/toolchain/binaries/latest-13
+            mkdir -p "$HOME/.tc"
+
+            # AArch64
+            curl -sL \
+                 $CDN/aarch64-linux-gnu/gcc-linaro-13.2.1-2023.09-x86_64_aarch64-linux-gnu.tar.xz \
+                 -o aarch64.tar.xz
+            tar -xf aarch64.tar.xz -C "$HOME/.tc"
+
+            # arm‑linux‑gnueabihf (32‑bit compat)
+            curl -sL \
+                 $CDN/arm-linux-gnueabihf/gcc-linaro-13.2.1-2023.09-x86_64_arm-linux-gnueabihf.tar.xz \
+                 -o armhf.tar.xz
+            tar -xf armhf.tar.xz -C "$HOME/.tc"
+
+            # PATH 최우선에 두기
+            echo 'export PATH=$HOME/.tc/gcc-linaro-13.2.1-2023.09-x86_64_aarch64-linux-gnu/bin:$HOME/.tc/gcc-linaro-13.2.1-2023.09-x86_64_arm-linux-gnueabihf/bin:$PATH' >> "$BASH_ENV"
+
+      # ─────────────────────────────────────────────
+      # 3) Neutron‑Clang + portable glibc 2.38
+      # ─────────────────────────────────────────────
+      - run:
+          name: Fetch Neutron‑Clang toolchain
+          command: |
+            set -eux
+            TC_DIR="$HOME/toolchains/neutron-clang"
+            mkdir -p "$TC_DIR" && cd "$TC_DIR"
+
             curl -sL https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman -o antman
             chmod +x antman
-            ./antman -S stable
-            ./antman --patch=glibc
-            echo "export PATH=$TC/bin:\$PATH" >> $BASH_ENV
+
+            ./antman -S stable          # LLVM/Clang 본체
+            ./antman --patch=glibc      # 휴대용 glibc 2.38
+
+            echo "export PATH=$TC_DIR/bin:\$PATH" >> "$BASH_ENV"
+
+      # ─────────────────────────────────────────────
+      # 4) 커널 빌드
+      # ─────────────────────────────────────────────
       - run:
-          name: Build kernel
+          name: Build Galaxy S20+ (y2q) kernel
           command: |
             set -eux
             source "$BASH_ENV"
-            OUT=$PWD/out
-            NCPU=$(nproc)
 
-            # 한 줄에 모든 변수 지정
-            make -C $PWD O=$OUT \
+            OUT=$PWD/out
+            NPROC=$(nproc)
+
+            # ── ① defconfig
+            make O=$OUT \
                  ARCH=arm64 LLVM=1 LLVM_IAS=1 \
-                 CC="clang --target=aarch64-linux-gnu --prefix=/usr/aarch64-linux-gnu/bin/" \
-                 LD=ld.lld \
+                 CC=clang LD=ld.lld \
+                 CLANG_TRIPLE=aarch64-linux-gnu- \
                  CROSS_COMPILE=aarch64-linux-gnu- \
-                 CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
+                 CROSS_COMPILE_COMPAT=arm-linux-gnueabihf- \
                  vendor/y2q_kor_singlex_defconfig
 
-            make -C $PWD -j$NCPU O=$OUT \
+            # ── ② 전체 빌드 (host 컴파일러는 gcc)
+            make -j$NPROC O=$OUT \
                  ARCH=arm64 LLVM=1 LLVM_IAS=1 \
-                 CC="clang --target=aarch64-linux-gnu --prefix=/usr/aarch64-linux-gnu/bin/" \
-                 LD=ld.lld \
+                 CC=clang LD=ld.lld \
+                 CLANG_TRIPLE=aarch64-linux-gnu- \
                  CROSS_COMPILE=aarch64-linux-gnu- \
-                 CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
+                 CROSS_COMPILE_COMPAT=arm-linux-gnueabihf- \
+                 HOSTCC=gcc HOSTCXX=g++
+
+      # ─────────────────────────────────────────────
+      # 5) 결과물 보존
+      # ─────────────────────────────────────────────
       - store_artifacts:
-          path: out/arch/arm64/boot/Image.gz-dtb
+          path:       out/arch/arm64/boot/Image.gz-dtb
           destination: kernel-image
 
 workflows:
