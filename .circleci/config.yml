@@ -1,12 +1,3 @@
-…처럼 **변수는 *환경* 대신 `make` 호출‑한‑줄에만** 넣어 주세요. (`gcc‑version.sh`가 `$CC` 문자열을 파싱할 때 공백·콜론을 오동작함) | `export CC=clang` 등 환경에 남기지 말고, 아래 예시처럼 `make … CC=clang …` 형식으로만 전달 |
-| **`python` 누락** | 우분투 20.04 기본 이미지는 `python` 심볼릭 링크가 없음.<br>패키지 `python-is-python3` 또는 `python3` 를 설치하고, 필요하면 `ln -s` 로 `/usr/bin/python` 생성 | 이미 apt 단계에 추가된 상태이므로 더 이상 에러가 없어야 합니다. |
-| **Kconfig 대화 프롬프트 제거** | `make olddefconfig` → `make -j$(nproc)` 순서만 사용.<br>혹시 또 멈추면: `yes "" | make olddefconfig` | CI 환경에서는 대화 입력이 불가하므로 반드시 **silent** 방식 사용 |
-
----
-
-## CircleCI `config.yml` 최종 예시
-
-```yaml
 version: 2.1
 
 executors:
@@ -77,3 +68,4 @@ workflows:
   build-and-store:
     jobs:
       - build-kernel
+
