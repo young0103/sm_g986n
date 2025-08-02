@@ -61,10 +61,18 @@ jobs:
                      CROSS_COMPILE_COMPAT=arm-linux-gnueabihf-"
 
             # ① defconfig
-            make $COMMON vendor/y2q_kor_singlex_defconfig
+            make O=$OUT ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+                     CC=clang LD=ld.lld \
+                     CLANG_TRIPLE=aarch64-linux-gnu \
+                     CROSS_COMPILE=aarch64-linux-gnu- \
+                     CROSS_COMPILE_COMPAT=arm-linux-gnueabihf- vendor/y2q_kor_singlex_defconfig
 
             # ② 전체 빌드 (host 툴체인은 gcc)
-            make -j$NPROC $COMMON HOSTCC=gcc HOSTCXX=g++
+            make -j$NPROC O=$OUT ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+                     CC=clang LD=ld.lld \
+                     CLANG_TRIPLE=aarch64-linux-gnu \
+                     CROSS_COMPILE=aarch64-linux-gnu- \
+                     CROSS_COMPILE_COMPAT=arm-linux-gnueabihf- HOSTCC=gcc HOSTCXX=g++
 
       # 4) 결과물
       - store_artifacts:
@@ -76,3 +84,4 @@ workflows:
   build-and-store:
     jobs:
       - build-kernel
+
