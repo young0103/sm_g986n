@@ -52,38 +52,24 @@ jobs:
       # 3) 커널 빌드 (make 호출마다 변수 직접 지정)
       # ────────────────────────────────────────
       - run:
-          name: Build Galaxy S20+ (y2q) kernel
+          name: Build Galaxy S20+ kernel
           command: |
             set -eux
             source "$BASH_ENV"
 
+            # ① ARM cross‑binutils를 PATH 맨 앞에
+            export PATH="/usr/aarch64-linux-gnu/bin:/usr/arm-linux-gnueabi/bin:$PATH"
+
             OUT=$PWD/out
+            MFLAGS="O=$OUT ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+                    CC=clang LD=ld.lld CLANG_TRIPLE=aarch64-linux-gnu- \
+                    CROSS_COMPILE=aarch64-linux-gnu- \
+                    CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
+                    HOSTCC=gcc HOSTCXX=g++"
 
-            # (a) 깨끗하게 초기화
-            make O=$OUT \
-                 ARCH=arm64 LLVM=1 LLVM_IAS=1 \
-                 CC=clang LD=ld.lld CLANG_TRIPLE=aarch64-linux-gnu- \
-                 CROSS_COMPILE=aarch64-linux-gnu- \
-                 CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
-                 HOSTCC=gcc HOSTCXX=g++ \
-                 mrproper
-
-            # (b) defconfig
-            make O=$OUT \
-                 ARCH=arm64 LLVM=1 LLVM_IAS=1 \
-                 CC=clang LD=ld.lld CLANG_TRIPLE=aarch64-linux-gnu- \
-                 CROSS_COMPILE=aarch64-linux-gnu- \
-                 CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
-                 HOSTCC=gcc HOSTCXX=g++ \
-                 vendor/y2q_kor_singlex_defconfig
-
-            # (c) 병렬 빌드
-            make -j"$(nproc)" O=$OUT \
-                 ARCH=arm64 LLVM=1 LLVM_IAS=1 \
-                 CC=clang LD=ld.lld CLANG_TRIPLE=aarch64-linux-gnu- \
-                 CROSS_COMPILE=aarch64-linux-gnu- \
-                 CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
-                 HOSTCC=gcc HOSTCXX=g++ 
+            make $MFLAGS mrproper
+            make $MFLAGS vendor/y2q_kor_singlex_defconfig
+            make -j$(nproc) $MFLAGS
 
       # ────────────────────────────────────────
       # 4) 결과물 저장
@@ -97,3 +83,4 @@ workflows:
   build-and-store:
     jobs:
       - build-kernel
+
