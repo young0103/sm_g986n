@@ -4,7 +4,7 @@ executors:
   kernel-exec:
     docker:
       - image: cimg/base:stable
-        user: root                    # apt 를 root 로 직접 실행
+        user: root
     environment:
       DEBIAN_FRONTEND: noninteractive
       TZ: Etc/UTC
@@ -13,70 +13,63 @@ jobs:
   build-kernel:
     executor: kernel-exec
     steps:
-    - checkout
+      - checkout
 
-    # 1️⃣ 필수 패키지 (python 심볼릭링크·ARM binutils 포함)
-    - run:
-          name: Install build prerequisites (+cross‑gcc)
+      # ───────────────────────── 1. 의존 패키지 ─────────────────────────
+      - run:
+          name: Install prerequisites
           command: |
             apt-get update -y
             apt-get install -y \
-              build-essential bc git curl python-is-python3 \
-              lz4 cpio flex bison zstd rsync \
-              libncurses-dev libssl-dev \
+              build-essential bc git curl lz4 cpio flex bison zstd rsync \
+              libncurses-dev libssl-dev python-is-python3 \
               gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
-              gcc-arm-linux-gnueabi g++-arm-linux-gnueabi \
-              binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi
+              gcc-arm-linux-gnueabi g++-arm-linux-gnueabi
 
-    # 2️⃣ Neutron‑Clang + glibc 2.38 호환 계층
-    - run:
-        name: Fetch Neutron‑Clang (portable glibc)
-        command: |
-          set -eux
-          TC_DIR="$HOME/toolchains/neutron-clang"
-          mkdir -p "${TC_DIR}" && cd "${TC_DIR}"
-          curl -sL https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman -o antman
-          chmod +x antman
-          ./antman -S stable            # 툴체인 본체
-          ./antman --patch=glibc        # glibc 2.38 shim
-          echo "export PATH=${TC_DIR}/bin:\$PATH" >> "$BASH_ENV"
+      # ───────────────── 2. Neutron‑Clang + 휴대용 GLIBC ────────────────
+      - run:
+          name: Fetch Neutron‑Clang
+          command: |
+            set -eux
+            TC="$HOME/toolchains/neutron-clang"
+            mkdir -p "$TC" && cd "$TC"
+            curl -sLo antman https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman
+            chmod +x antman
+            ./antman -S stable
+            ./antman --patch=glibc
+            echo "export PATH=$TC/bin:\$PATH" >> "$BASH_ENV"
 
-    # 3️⃣ 커널 빌드 (완전 비‑대화형)
-    - run:
-        name: Build Galaxy S20+ (y2q) kernel
-        command: |
-          set -eux
-          source "$BASH_ENV"
-          export OUT=$PWD/out
+      # ───────────────────── 3. 커널 빌드 (one‑shot) ─────────────────────
+      - run:
+          name: Build y2q kernel
+          command: |
+            set -eux
+            source "$BASH_ENV"
 
-          # (1) defconfig
-          make  -C $PWD  O=$OUT \
-                ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang LD=ld.lld \
-                CROSS_COMPILE=aarch64-linux-gnu- \
-                CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
-                HOSTCC=gcc HOSTCXX=g++ \
-                vendor/y2q_kor_singlex_defconfig
+            # sanity check – cross‑gcc 존재 여부
+            which aarch64-linux-gnu-gcc
+            which arm-linux-gnueabi-gcc
 
-          # (2) olddefconfig → 대화 입력 차단
-          make  -C $PWD  O=$OUT olddefconfig </dev/null
+            OUT=$PWD/out
+            make O=$OUT ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+                 CC=clang LD=ld.lld \
+                 CROSS_COMPILE=aarch64-linux-gnu- \
+                 CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
+                 vendor/y2q_kor_singlex_defconfig
 
-          # (3) 전체 빌드
-          make -C $PWD -j"$(nproc)" O=$OUT \
-               ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang LD=ld.lld \
-               AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy        \
-               OBJDUMP=llvm-objdump STRIP=llvm-strip             \
-               CROSS_COMPILE=aarch64-linux-gnu-                  \
-               CROSS_COMPILE_COMPAT=arm-linux-gnueabi-           \
-               HOSTCC=gcc HOSTCXX=g++
+            make -j"$(nproc)" O=$OUT ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+                 CC=clang LD=ld.lld \
+                 CROSS_COMPILE=aarch64-linux-gnu- \
+                 CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
+                 HOSTCC=gcc HOSTCXX=g++
 
-    # 4️⃣ 결과물 저장
-    - store_artifacts:
-        path:       out/arch/arm64/boot/Image.gz-dtb
-        destination: kernel-image
+      # ───────────────────────── 4. 결과물 ─────────────────────────────
+      - store_artifacts:
+          path: out/arch/arm64/boot/Image.gz-dtb
+          destination: kernel-image
 
 workflows:
   version: 2
   build-and-store:
     jobs:
-    - build-kernel
-
+      - build-kernel
