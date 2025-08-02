@@ -4,8 +4,8 @@ version: 2.1
 executors:
   kernel-exec:
     docker:
-      - image: cimg/base:stable   # Ubuntu 20.04 LTS (focal) 기반
-        user: root               # 패키지 설치를 위해 root 권한
+      - image: cimg/base:stable     # Ubuntu 20.04
+        user: root
     environment:
       DEBIAN_FRONTEND: noninteractive
       TZ: Etc/UTC
@@ -14,84 +14,53 @@ jobs:
   build-kernel:
     executor: kernel-exec
     steps:
-      # ─────────────────────────────────────────────
-      # 0) 소스 코드 체크아웃
-      # ─────────────────────────────────────────────
       - checkout
 
-      # ─────────────────────────────────────────────
-      # 1) 호스트 의존 패키지 설치
-      # ─────────────────────────────────────────────
+      # 1) 필수 패키지
       - run:
-          name: Install build prerequisites
+          name: Install prerequisites
           command: |
             apt-get update -y
             apt-get install -y \
-              build-essential bc git curl lz4 cpio flex bison zstd rsync \
-              libncurses-dev libssl-dev python-is-python3 \
-              gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-              gcc-arm-linux-gnueabi  binutils-arm-linux-gnueabi
+              build-essential bc git curl python-is-python3 lz4 cpio flex bison zstd \
+              libncurses-dev libssl-dev gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+              gcc-arm-linux-gnueabi binutils-arm-linux-gnueabi
 
-      # ─────────────────────────────────────────────
-      # 2) Neutron‑Clang (glibc 패치 포함) 설치
-      # ─────────────────────────────────────────────
+      # 2) Neutron‑Clang + portable glibc
       - run:
-          name: Fetch Neutron‑Clang toolchain
+          name: Fetch Neutron‑Clang
           command: |
             set -eux
-            TC_DIR="$HOME/toolchains/neutron-clang"
+            TC_DIR=$HOME/toolchains/neutron-clang
             mkdir -p "$TC_DIR" && cd "$TC_DIR"
             curl -sL https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman -o antman
             chmod +x antman
-            ./antman -S stable          # 툴체인 자체 다운로드
-            ./antman --patch=glibc      # glibc 2.38 portable 패치
-            # PATH 등록 (이후 step 에서 source 로 불러옴)
-            echo "export PATH=$TC_DIR/bin:\$PATH" >> "$BASH_ENV"
+            ./antman -S stable
+            ./antman --patch=glibc     # GLIBC 2.38
+            echo "export PATH=$TC_DIR/bin:\$PATH" >> $BASH_ENV
 
-      # ─────────────────────────────────────────────
-      # 3) 커널 빌드
-      # ─────────────────────────────────────────────
+      # 3) Build kernel
       - run:
-          name: Build Galaxy S20+ (y2q) kernel
+          name: Build Galaxy S20+ kernel
           command: |
             set -eux
-            source "$BASH_ENV"
+            source $BASH_ENV
 
-            # ── 공통 변수 ────────────────────────
-            export OUT=$PWD/out
-            export ARCH=arm64
-            export LLVM=1
-            export LLVM_IAS=1
-            export CC=clang
-            export LD=ld.lld
-            export CROSS_COMPILE=aarch64-linux-gnu-
-            export CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
+            OUT=$PWD/out
+            MAKE_FLAGS="O=$OUT ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+                        CC=clang LD=ld.lld \
+                        CROSS_COMPILE=aarch64-linux-gnu- \
+                        CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
+                        AS=aarch64-linux-gnu-as \
+                        HOSTCC=gcc HOSTCXX=g++"
 
-            # ── 0) 클린 빌드 준비 ────────────────
-            make O=$OUT mrproper
-            make O=$OUT clean
+            # 깨끗한 빌드 디렉터리
+            make $MAKE_FLAGS mrproper
+            make $MAKE_FLAGS vendor/y2q_kor_singlex_defconfig
+            yes "" | make $MAKE_FLAGS olddefconfig
+            make -j$(nproc) $MAKE_FLAGS
 
-            # ── 1) defconfig ─────────────────────
-            make O=$OUT \
-                 ARCH=$ARCH LLVM=$LLVM LLVM_IAS=$LLVM_IAS \
-                 CC=$CC LD=$LD \
-                 CROSS_COMPILE=$CROSS_COMPILE \
-                 CROSS_COMPILE_COMPAT=$CROSS_COMPILE_COMPAT \
-                 vendor/y2q_kor_singlex_defconfig
-
-            # ── 2) 실제 컴파일 ───────────────────
-            make -j"$(nproc)" O=$OUT \
-                 ARCH=$ARCH LLVM=$LLVM LLVM_IAS=$LLVM_IAS \
-                 CC=$CC LD=$LD \
-                 AR=llvm-ar NM=llvm-nm \
-                 OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip \
-                 CROSS_COMPILE=$CROSS_COMPILE \
-                 CROSS_COMPILE_COMPAT=$CROSS_COMPILE_COMPAT \
-                 HOSTCC=gcc HOSTCXX=g++
-
-      # ─────────────────────────────────────────────
-      # 4) 산출물 저장
-      # ─────────────────────────────────────────────
+      # 4) Artefact
       - store_artifacts:
           path: out/arch/arm64/boot/Image.gz-dtb
           destination: kernel-image
