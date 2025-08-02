@@ -1,10 +1,11 @@
+# .circleci/config.yml  – 통합 IAS(CLANG) 전용
+
 version: 2.1
 
 executors:
   kernel-exec:
     docker:
-      # Ubuntu 22.04 LTS + 최신 cimg 툴체인 (binutils 2.38, GCC 12…)
-      - image: cimg/base:stable        # 또는 :2024.05 등
+      - image: cimg/base:stable      # Ubuntu 20.04 (binutils 2.34 , 사용 안 함)
         user: root
     environment:
       DEBIAN_FRONTEND: noninteractive
@@ -14,63 +15,64 @@ jobs:
   build-kernel:
     executor: kernel-exec
     steps:
-      # 0) 소스 가져오기
-      - checkout
+    # 0) 소스
+    - checkout
 
-      # 1) 호스트‑빌드 의존성 설치
-      - run:
-          name: Install host‑side prerequisites
-          command: |
-            apt-get update -y
-            apt-get install -y \
-              build-essential bc git curl python-is-python3 \
-              lz4 cpio flex bison zstd \
-              libncurses-dev libssl-dev \
-              binutils-aarch64-linux-gnu binutils-arm-linux-gnueabihf
+    # 1) 호스트 툴
+    - run:
+        name: Host prerequisites
+        command: |
+          apt-get update -y
+          apt-get install -y \
+            build-essential bc git curl python3 lz4 cpio flex bison zstd \
+            libncurses-dev libssl-dev
 
-      # 2) Neutron‑Clang (LLVM 17 계열) + 휴대용 glibc 2.38
-      - run:
-          name: Fetch Neutron‑Clang toolchain
-          command: |
-            set -eux
-            TC_DIR="$HOME/toolchains/neutron-clang"
-            mkdir -p "$TC_DIR" && cd "$TC_DIR"
-            curl -sL https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman -o antman
-            chmod +x antman
-            ./antman -S stable
-            ./antman --patch=glibc
-            echo "export PATH=$TC_DIR/bin:\$PATH" >> "$BASH_ENV"
+    # 2) Neutron‑Clang (휴대용 glibc 포함)
+    - run:
+        name: Toolchain – Neutron‑Clang
+        command: |
+          set -eux
+          TC=$HOME/toolchains/neutron-clang
+          mkdir -p "$TC" && cd "$TC"
+          curl -sL https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman -o antman
+          chmod +x antman
+          ./antman -S stable
+          ./antman --patch=glibc         # glibc‑2.38 bundle
+          echo "export PATH=$TC/bin:\$PATH" >> "$BASH_ENV"
 
-      # 3) 커널 빌드
-      - run:
-          name: Build Galaxy S20+ (y2q) kernel
-          command: |
-            set -eux
-            source "$BASH_ENV"
+    # 3) 커널 빌드
+    - run:
+        name: Build Galaxy S20+ kernel (LLVM IAS only)
+        command: |
+          set -eux
+          source "$BASH_ENV"
 
-            OUT=$PWD/out
-            make O=$OUT \
-                 ARCH=arm64 LLVM=1 LLVM_IAS=1 \
-                 CC=clang LD=ld.lld \
-                 CLANG_TRIPLE=aarch64-linux-gnu- \
-                 CROSS_COMPILE=aarch64-linux-gnu- \
-                 CROSS_COMPILE_COMPAT=arm-linux-gnueabihf- \
-                 vendor/y2q_kor_singlex_defconfig
+          OUT=$PWD/out
+          NPROC=$(nproc)
 
-            make -j"$(nproc)" O=$OUT \
-                 ARCH=arm64 LLVM=1 LLVM_IAS=1 \
-                 CC=clang LD=ld.lld \
-                 CLANG_TRIPLE=aarch64-linux-gnu- \
-                 CROSS_COMPILE=aarch64-linux-gnu- \
-                 CROSS_COMPILE_COMPAT=arm-linux-gnueabihf- \
-                 HOSTCC=gcc HOSTCXX=g++
+          # (A) defconfig
+          make O=$OUT \
+               ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+               CC=clang LD=ld.lld \
+               CLANG_TRIPLE=aarch64-linux-gnu- \
+               CROSS_COMPILE_COMPAT=arm-linux-gnueabihf- \
+               vendor/y2q_kor_singlex_defconfig
 
-      # 4) 바이너리 보존
-      - store_artifacts:
-          path:       out/arch/arm64/boot/Image.gz-dtb
-          destination: kernel-image
+          # (B) full build   — CROSS_COMPILE 비우기!
+          make -j$NPROC O=$OUT \
+               ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+               CC=clang LD=ld.lld \
+               CLANG_TRIPLE=aarch64-linux-gnu- \
+               CROSS_COMPILE_COMPAT=arm-linux-gnueabihf- \
+               HOSTCC=gcc HOSTCXX=g++
+
+    # 4) artefact
+    - store_artifacts:
+        path:       out/arch/arm64/boot/Image.gz-dtb
+        destination: kernel-image
 
 workflows:
+  version: 2
   build-and-store:
     jobs:
       - build-kernel
