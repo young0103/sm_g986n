@@ -1,72 +1,124 @@
+# .circleci/config.yml
 version: 2.1
 
+##############################
+# 1) EXECUTORS
+##############################
 executors:
-  kernel-exec:
+  kernel-builder:
     docker:
       - image: cimg/base:stable     # Ubuntu 20.04
-        user: root
+        user: root                  # need root for apt
     environment:
       DEBIAN_FRONTEND: noninteractive
       TZ: Etc/UTC
 
-jobs:
-  build-kernel:
-    executor: kernel-exec
+##############################
+# 2) COMMANDS
+##############################
+commands:
+  install-packages:
+    description: "APT prerequisites for kernel + LLVM cross‑build"
     steps:
-      - checkout
-
-      # 1) 필수 패키지
       - run:
           name: Install prerequisites
           command: |
             apt-get update -y
             apt-get install -y \
-              build-essential bc git curl python-is-python3 lz4 cpio flex bison zstd \
-              libncurses-dev libssl-dev gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-              gcc-arm-linux-gnueabi binutils-arm-linux-gnueabi
-
-      # 2) Neutron‑Clang + portable glibc
+              build-essential bc git curl lz4 cpio flex bison zstd \
+              libncurses-dev libssl-dev \
+              gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+              gcc-arm-linux-gnueabi  binutils-arm-linux-gnueabi
+  fetch-neutron-clang:
+    description: "Download / restore Neutron‑Clang toolchain"
+    parameters:
+      cache-key: { type: string }
+    steps:
+      - restore_cache:
+          keys:
+            - << parameters.cache-key >>
       - run:
-          name: Fetch Neutron‑Clang
+          name: Fetch Neutron‑Clang (if cache miss)
           command: |
-            set -eux
-            TC_DIR=$HOME/toolchains/neutron-clang
-            mkdir -p "$TC_DIR" && cd "$TC_DIR"
-            curl -sL https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman -o antman
-            chmod +x antman
-            ./antman -S stable
-            ./antman --patch=glibc     # GLIBC 2.38
-            echo "export PATH=$TC_DIR/bin:\$PATH" >> $BASH_ENV
+            if [ ! -d "$HOME/toolchains/neutron-clang/bin" ]; then
+              set -eux
+              TC_DIR=$HOME/toolchains/neutron-clang
+              mkdir -p "$TC_DIR" && cd "$TC_DIR"
+              curl -sL https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman -o antman
+              chmod +x antman
+              ./antman -S stable            # latest stable release
+              ./antman --patch=glibc        # portable GLIBC ≥ 2.38
+            fi
+      - save_cache:
+          key: << parameters.cache-key >>
+          paths:
+            - ~/toolchains/neutron-clang
+  stub-samsung-scripts:
+    description: "Silence vendor helper‑script warnings"
+    steps:
+      - run:
+          name: Add dummy secgetspf
+          command: |
+            echo -e '#!/bin/sh\nexit 0' >/usr/local/bin/secgetspf
+            chmod +x /usr/local/bin/secgetspf
 
-      # 3) Build kernel
+##############################
+# 3) JOBS
+##############################
+jobs:
+  build-kernel:
+    executor: kernel-builder
+    steps:
+      - checkout
+
+      # --- 3.1 APT packages
+      - install-packages
+
+      # --- 3.2 Toolchain (cache+fetch)
+      - fetch-neutron-clang:
+          cache-key: v1-neutron-clang-{{ checksum ".circleci/config.yml" }}
+
+      # --- 3.3 Stub noisy Samsung helper
+      - stub-samsung-scripts
+
+      # --- 3.4 Build
       - run:
           name: Build Galaxy S20+ kernel
           command: |
             set -eux
-            source $BASH_ENV
 
+            # ① toolchain path
+            export PATH="$HOME/toolchains/neutron-clang/bin:$PATH"
+
+            # ② build environment
+            export ARCH=arm64
+            export SUBARCH=arm64
+            export LLVM=1 LLVM_IAS=1
+            export CC=clang LD=ld.lld
+            export CROSS_COMPILE=aarch64-linux-gnu-
+            export CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
+            export CLANG_TRIPLE=aarch64-linux-gnu-
+
+            # ③ output dir
             OUT=$PWD/out
-            MAKE_FLAGS="O=$OUT ARCH=arm64 LLVM=1 LLVM_IAS=1 \
-                        CC=clang LD=ld.lld \
-                        CROSS_COMPILE=aarch64-linux-gnu- \
-                        CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
-                        AS=aarch64-linux-gnu-as \
-                        HOSTCC=gcc HOSTCXX=g++"
 
-            # 깨끗한 빌드 디렉터리
-            make $MAKE_FLAGS mrproper
-            make $MAKE_FLAGS vendor/y2q_kor_singlex_defconfig
-            make O=out CC=clang ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- -j$(nproc)
+            # ④ Kbuild
+            make O=$OUT mrproper
+            make O=$OUT vendor/y2q_kor_singlex_defconfig
+            make O=$OUT -j$(nproc)
 
-      # 4) Artefact
+      # --- 3.5 Store artefacts
       - store_artifacts:
           path: out/arch/arm64/boot/Image.gz-dtb
-          destination: kernel-image
+          destination: kernel/Image.gz-dtb
+      - store_artifacts:
+          path: out/arch/arm64/boot/dts
+          destination: kernel/dtb
 
+##############################
+# 4) WORKFLOWS
+##############################
 workflows:
-  version: 2
   build-and-store:
     jobs:
       - build-kernel
-
-
