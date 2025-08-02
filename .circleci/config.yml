@@ -17,15 +17,16 @@ jobs:
 
     # 1️⃣ 필수 패키지 (python 심볼릭링크·ARM binutils 포함)
     - run:
-        name: Install build prerequisites
-        command: |
-          apt-get update -y
-          apt-get install -y \
-            build-essential bc git curl lz4 cpio flex bison rsync zstd \
-            libncurses-dev libssl-dev                                                  \
-            python-is-python3      #  ←  'python' 명령 확보                           \
-            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu                          \
-            gcc-arm-linux-gnueabi binutils-arm-linux-gnueabi
+          name: Install build prerequisites (+cross‑gcc)
+          command: |
+            apt-get update -y
+            apt-get install -y \
+              build-essential bc git curl python-is-python3 \
+              lz4 cpio flex bison zstd rsync \
+              libncurses-dev libssl-dev \
+              gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+              gcc-arm-linux-gnueabi g++-arm-linux-gnueabi \
+              binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi
 
     # 2️⃣ Neutron‑Clang + glibc 2.38 호환 계층
     - run:
@@ -78,3 +79,4 @@ workflows:
   build-and-store:
     jobs:
     - build-kernel
+
