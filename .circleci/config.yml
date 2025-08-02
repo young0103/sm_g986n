@@ -1,78 +1,56 @@
-version: 2.1
+# .circleci/config.yml (핵심 부분만 발췌)
+steps:
+  - checkout
+  - run:
+      name: Install prerequisites
+      command: |
+        apt-get update -y
+        apt-get install -y \
+          build-essential bc git curl python-is-python3 lz4 cpio flex bison zstd \
+          libncurses-dev libssl-dev \
+          gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+          gcc-arm-linux-gnueabi binutils-arm-linux-gnueabi
+  - run:
+      name: Fetch Neutron‑Clang
+      command: |
+        set -eux
+        TC=$HOME/toolchains/neutron-clang
+        mkdir -p "$TC" && cd "$TC"
+        curl -sL https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman -o antman
+        chmod +x antman
+        ./antman -S stable
+        ./antman --patch=glibc            # 휴대용 glibc 2.38
+        echo "export PATH=$TC/bin:\$PATH" >> "$BASH_ENV"
+  - run:
+      name: Build Galaxy S20+ (y2q) kernel
+      command: |
+        set -eux
+        source "$BASH_ENV"
 
-executors:
-  kernel-exec:
-    docker:
-      - image: cimg/base:stable        # Ubuntu 20.04
-        user: root
-    environment:
-      DEBIAN_FRONTEND: noninteractive
-      TZ: Etc/UTC
+        # 교차 binutils(ELF 32/64) 를 우선 검색
+        export PATH="/usr/aarch64-linux-gnu/bin:/usr/arm-linux-gnueabi/bin:$PATH"
 
-jobs:
-  build-kernel:
-    executor: kernel-exec
-    steps:
-      - checkout
+        OUT=$PWD/out
+        NPROC=$(nproc)
 
-      # 1) 필수 패키지 ──────────────────────────────────────
-      - run:
-          name: Install prerequisites
-          command: |
-            apt-get update -y
-            apt-get install -y \
-              build-essential bc git curl python-is-python3 lz4 cpio flex bison zstd \
-              libncurses-dev libssl-dev \
-              gcc-aarch64-linux-gnu  binutils-aarch64-linux-gnu \
-              gcc-arm-linux-gnueabi  binutils-arm-linux-gnueabi
+        # ── ① defconfig ───────────────────────────────────────
+        make O=$OUT \
+             ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+             CC=clang LD=ld.lld \
+             CLANG_TRIPLE=aarch64-linux-gnu- \
+             CROSS_COMPILE=aarch64-linux-gnu- \
+             CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
+             AS=aarch64-linux-gnu-as \
+             AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy \
+             vendor/y2q_kor_singlex_defconfig
 
-      # 2) Neutron‑Clang( + portable glibc 2.38) ───────────
-      - run:
-          name: Fetch Neutron‑Clang
-          command: |
-            set -eux
-            TC=$HOME/toolchains/neutron-clang
-            mkdir -p "$TC" && cd "$TC"
-            curl -sL https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman -o antman
-            chmod +x antman
-            ./antman -S stable
-            ./antman --patch=glibc
-            echo "export PATH=$TC/bin:\$PATH" >> "$BASH_ENV"
-
-      # 3) 커널 빌드 ────────────────────────────────────────
-      - run:
-          name: Build Galaxy S20+ kernel (y2q)
-          command: |
-            set -eux
-            source "$BASH_ENV"
-
-            # (※) HOST 빌드가 x86 binutils 를 사용하도록 PATH 순서를 바꾸지 않음
-            #     크로스 툴은 prefix 로만 호출한다.
-            OUT=$PWD/out
-            NPROC=$(nproc)
-
-            # ① defconfig
-            make \
-              O=$OUT ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang LD=ld.lld \
-              CROSS_COMPILE=aarch64-linux-gnu- \
-              CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
-              HOSTCC=clang HOSTCXX=clang++ \
-              vendor/y2q_kor_singlex_defconfig
-
-            # ② full build
-            make -j$NPROC \
-              O=$OUT ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang LD=ld.lld \
-              CROSS_COMPILE=aarch64-linux-gnu- \
-              CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
-              HOSTCC=clang HOSTCXX=clang++
-
-      # 4) 결과물 저장 ──────────────────────────────────────
-      - store_artifacts:
-          path:       out/arch/arm64/boot/Image.gz-dtb
-          destination: kernel-image
-
-workflows:
-  version: 2
-  build-and-store:
-    jobs:
-      - build-kernel
+        # ── ② 풀 빌드  (Host toolchain은 **기본 gcc** 사용) ──
+        make -j$NPROC O=$OUT \
+             ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+             CC=clang LD=ld.lld \
+             CLANG_TRIPLE=aarch64-linux-gnu- \
+             CROSS_COMPILE=aarch64-linux-gnu- \
+             CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
+             AS=aarch64-linux-gnu-as \
+             AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy \
+             HOSTCC=gcc HOSTCXX=g++
