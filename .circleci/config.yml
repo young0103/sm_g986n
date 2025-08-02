@@ -1,91 +1,96 @@
+# .circleci/config.yml
 version: 2.1
 
 executors:
   kernel-exec:
     docker:
-      - image: cimg/base:stable          # Ubuntu 20.04
+      - image: cimg/base:stable    # Ubuntu 20.04 LTS
         user: root
     environment:
       DEBIAN_FRONTEND: noninteractive
-      TZ:   Etc/UTC
+      TZ: Etc/UTC
 
 jobs:
   build-kernel:
     executor: kernel-exec
     steps:
-      # ────────────────────────────── 0. 소스
-      - checkout
+    # 0) 소스 가져오기 -------------------------------------------------------
+    - checkout
 
-      # ────────────────────────────── 1. 호스트 의존성
-      - run:
-          name: Install host packages
-          command: |
-            apt-get update -y
-            apt-get install -y \
-              build-essential bc git curl python-is-python3 \
-              lz4 cpio flex bison zstd libncurses-dev libssl-dev
+    # 1) 호스트 빌드 툴 설치 --------------------------------------------------
+    - run:
+        name: Install host‑side prerequisites
+        command: |
+          apt-get update -y
+          apt-get install -y \
+            build-essential bc git curl python-is-python3 \
+            lz4 cpio flex bison zstd libncurses-dev libssl-dev
 
-      # ────────────────────────────── 2. Linaro 13.2 binutils
-      - run:
-          name: Install cross‑binutils (Linaro latest‑13)
-          command: |
-            set -eux
-            BASE="https://releases.linaro.org/components/toolchain/binaries/latest-13"
-            DST="$HOME/.tc"; mkdir -p "$DST"
+    # 2) Arm GNU Toolchain 13.2 (aarch64 & armhf) ----------------------------
+    - run:
+        name: Get Arm GNU Toolchain 13.2 (2023‑rel1)
+        command: |
+          set -eux
+          dst="$HOME/toolchains/arm"
+          mkdir -p "$dst"
+          
+          base="https://developer.arm.com/-/media/Files/downloads/gnu/13.2.rel1"
+          a64="gcc-arm-13.2.rel1-x86_64-aarch64-none-linux-gnu.tar.xz"
+          arm="gcc-arm-13.2.rel1-x86_64-arm-none-linux-gnueabihf.tar.xz"
 
-            for triple in aarch64-linux-gnu arm-linux-gnueabihf; do
-              pkg="$(curl -s ${BASE}/${triple}/ | \
-                     grep -o 'gcc-linaro-[^"]*x86_64_[^"]*\.tar\.xz' | head -1)"
-              echo "[*] Fetch  $pkg"
-              curl -L "${BASE}/${triple}/${pkg}" | tar -xJ -C "$DST"
-              echo "export PATH=$DST/${pkg%.tar.xz}/bin:\$PATH" >> "$BASH_ENV"
-            done
+          curl -sSL "$base/$a64" | tar -xJ -C "$dst"
+          curl -sSL "$base/$arm" | tar -xJ -C "$dst"
 
-      # ────────────────────────────── 3. Neutron‑Clang
-      - run:
-          name: Fetch Neutron‑Clang
-          command: |
-            set -eux
-            TC="$HOME/toolchains/neutron-clang"
-            mkdir -p "$TC" && cd "$TC"
-            curl -sL https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman -o antman
-            chmod +x antman
-            ./antman -S stable
-            ./antman --patch=glibc          # glibc 2.38
-            echo "export PATH=$TC/bin:\$PATH" >> "$BASH_ENV"
+          # PATH 맨 앞에 추가
+          echo "export PATH=$dst/gcc-arm-13.2.rel1-x86_64-aarch64-none-linux-gnu/bin:$dst/gcc-arm-13.2.rel1-x86_64-arm-none-linux-gnueabihf/bin:\$PATH" >> "$BASH_ENV"
 
-      # ────────────────────────────── 4. 커널 빌드
-      - run:
-          name: Build Galaxy S20+ kernel
-          command: |
-            set -eux
-            source "$BASH_ENV"
+    # 3) Neutron‑Clang --------------------------------------------------------
+    - run:
+        name: Fetch Neutron‑Clang (with portable glibc 2.38)
+        command: |
+          set -eux
+          tc="$HOME/toolchains/neutron-clang"
+          mkdir -p "$tc" && cd "$tc"
+          curl -sSL https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman -o antman
+          chmod +x antman
+          ./antman -S stable
+          ./antman --patch=glibc
+          echo "export PATH=$tc/bin:\$PATH" >> "$BASH_ENV"
 
-            OUT=$PWD/out
-            NPROC=$(nproc)
+    # 4) 커널 빌드 ------------------------------------------------------------
+    - run:
+        name: Build Galaxy S20+ (y2q) kernel
+        command: |
+          set -eux
+          source "$BASH_ENV"
 
-            # ① defconfig
-            make O=$OUT \
-                 ARCH=arm64 LLVM=1 LLVM_IAS=1 \
-                 CC=clang LD=ld.lld \
-                 CLANG_TRIPLE=aarch64-linux-gnu- \
-                 CROSS_COMPILE=aarch64-linux-gnu- \
-                 CROSS_COMPILE_COMPAT=arm-linux-gnueabihf- \
-                 vendor/y2q_kor_singlex_defconfig
+          OUT=$PWD/out
+          NPROC=$(nproc)
 
-            # ② 전체 빌드 (AS 지정 금지!)
-            make -j$NPROC O=$OUT \
-                 ARCH=arm64 LLVM=1 LLVM_IAS=1 \
-                 CC=clang LD=ld.lld \
-                 CLANG_TRIPLE=aarch64-linux-gnu- \
-                 CROSS_COMPILE=aarch64-linux-gnu- \
-                 CROSS_COMPILE_COMPAT=arm-linux-gnueabihf- \
-                 HOSTCC=gcc HOSTCXX=g++
+          # ── defconfig
+          make O=$OUT                               \
+               ARCH=arm64 LLVM=1 LLVM_IAS=1         \
+               CC=clang LD=ld.lld                   \
+               CLANG_TRIPLE=aarch64-none-linux-gnu- \
+               CROSS_COMPILE=aarch64-none-linux-gnu-\
+               CROSS_COMPILE_COMPAT=arm-none-linux-gnueabihf- \
+               vendor/y2q_kor_singlex_defconfig
 
-      # ────────────────────────────── 5. artefact
-      - store_artifacts:
-          path:       out/arch/arm64/boot/Image.gz-dtb
-          destination: kernel-image
+          # ── full build
+          make -j$NPROC  O=$OUT                     \
+               ARCH=arm64 LLVM=1 LLVM_IAS=1         \
+               CC=clang LD=ld.lld                   \
+               CLANG_TRIPLE=aarch64-none-linux-gnu- \
+               CROSS_COMPILE=aarch64-none-linux-gnu-\
+               CROSS_COMPILE_COMPAT=arm-none-linux-gnueabihf- \
+               AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy \
+               OBJDUMP=llvm-objdump STRIP=llvm-strip \
+               HOSTCC=gcc HOSTCXX=g++
+
+    # 5) 결과물 보존 ----------------------------------------------------------
+    - store_artifacts:
+        path:       out/arch/arm64/boot/Image.gz-dtb
+        destination: kernel-image
 
 workflows:
   version: 2
