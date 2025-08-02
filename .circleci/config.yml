@@ -1,9 +1,10 @@
+# .circleci/config.yml  (Ubuntu 20.04 Docker, ARM64 커널 크로스‑빌드)
 version: 2.1
 
 executors:
   kernel-exec:
     docker:
-      - image: cimg/base:stable          # Ubuntu 20.04
+      - image: cimg/base:stable        # focal (20.04)
         user: root
     environment:
       DEBIAN_FRONTEND: noninteractive
@@ -13,54 +14,60 @@ jobs:
   build-kernel:
     executor: kernel-exec
     steps:
-      # 0) 소스
+
+      # ─────────────────────── 0. 소스 가져오기 ───────────────────────
       - checkout
 
-      # 1) Host 패키지
+      # ───────────────── 1. 호스트 의존 패키지 설치 ─────────────────
       - run:
-          name: Install host prerequisites
+          name: Install host‑side prerequisites
           command: |
+            set -eux
             apt-get update -y
             apt-get install -y \
               build-essential bc git curl python-is-python3 \
-              lz4 cpio flex bison zstd \
-              libncurses-dev libssl-dev
+              lz4 cpio flex bison zstd libncurses-dev libssl-dev \
+              xz-utils   # ← tar –J 가 의존
 
-      # 2) Linaro cross‑binutils (13.2‑2023.09)
+      # ──────── 2. 최신 Linaro Cross‑Binutils (aarch64 + armhf) ────────
       - run:
-          name: Get Linaro cross‑binutils
+          name: Get Linaro cross‑binutils
           command: |
-            set -eux
-            BASE=https://releases.linaro.org/components/toolchain/binaries/13.2-2023.09
-            DST=$HOME/.tc
-            mkdir -p "$DST"
+            set -euo pipefail
+            BASE="https://releases.linaro.org/components/toolchain/binaries/13.2-2023.09"
+            DST="$HOME/.tc"; mkdir -p "$DST"
 
-            # aarch64‑linux‑gnu
-            curl -sL "$BASE/aarch64-linux-gnu/gcc-linaro-13.2.1-2023.09-x86_64_aarch64-linux-gnu.tar.xz" \
-              | tar -xJf - -C "$DST"
+            fetch_tc() {                # $1 = triple dir, $2 = tarball name
+              local url="$BASE/$1/$2"
+              echo "[*] Download  $url"
+              curl -fSL -o "$DST/$2" "$url"
+              echo "[*] Unpack     $2"
+              tar -xJf "$DST/$2" -C "$DST"
+              rm  "$DST/$2"
+            }
 
-            # arm‑linux‑gnueabihf
-            curl -sL "$BASE/arm-linux-gnueabihf/gcc-linaro-13.2.1-2023.09-x86_64_arm-linux-gnueabihf.tar.xz" \
-              | tar -xJf - -C "$DST"
+            fetch_tc aarch64-linux-gnu  gcc-linaro-13.2.1-2023.09-x86_64_aarch64-linux-gnu.tar.xz
+            fetch_tc arm-linux-gnueabihf gcc-linaro-13.2.1-2023.09-x86_64_arm-linux-gnueabihf.tar.xz
 
+            # PATH 최우선 등록
             echo 'export PATH=$HOME/.tc/gcc-linaro-13.2.1-2023.09-x86_64_aarch64-linux-gnu/bin:$HOME/.tc/gcc-linaro-13.2.1-2023.09-x86_64_arm-linux-gnueabihf/bin:$PATH' >> "$BASH_ENV"
 
-      # 3) Neutron‑Clang
+      # ──────────────── 3. Neutron‑Clang + portable glibc ───────────────
       - run:
-          name: Fetch Neutron‑Clang
+          name: Fetch Neutron‑Clang (with portable glibc 2.38)
           command: |
             set -eux
-            TC=$HOME/toolchains/neutron-clang
-            mkdir -p "$TC" && cd "$TC"
+            TC_DIR="$HOME/toolchains/neutron-clang"
+            mkdir -p "$TC_DIR" && cd "$TC_DIR"
             curl -sL https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman -o antman
             chmod +x antman
             ./antman -S stable
             ./antman --patch=glibc
-            echo "export PATH=$TC/bin:\$PATH" >> "$BASH_ENV"
+            echo "export PATH=$TC_DIR/bin:\$PATH" >> "$BASH_ENV"
 
-      # 4) 커널 빌드
+      # ───────────────────── 4. 커널 빌드 ─────────────────────
       - run:
-          name: Build Galaxy S20+ kernel
+          name: Build Galaxy S20+ (y2q) kernel
           command: |
             set -eux
             source "$BASH_ENV"
@@ -68,7 +75,7 @@ jobs:
             OUT=$PWD/out
             NCPU=$(nproc)
 
-            # defconfig
+            # ① defconfig
             make O=$OUT \
                  ARCH=arm64 LLVM=1 LLVM_IAS=1 \
                  CC=clang LD=ld.lld \
@@ -77,7 +84,7 @@ jobs:
                  CROSS_COMPILE_COMPAT=arm-linux-gnueabihf- \
                  vendor/y2q_kor_singlex_defconfig
 
-            # full build
+            # ② full build
             make -j$NCPU O=$OUT \
                  ARCH=arm64 LLVM=1 LLVM_IAS=1 \
                  CC=clang LD=ld.lld \
@@ -86,9 +93,9 @@ jobs:
                  CROSS_COMPILE_COMPAT=arm-linux-gnueabihf- \
                  HOSTCC=gcc HOSTCXX=g++
 
-      # 5) 아티팩트
+      # ──────────────── 5. 산출물 보존 ────────────────
       - store_artifacts:
-          path: out/arch/arm64/boot/Image.gz-dtb
+          path:       out/arch/arm64/boot/Image.gz-dtb
           destination: kernel-image
 
 workflows:
