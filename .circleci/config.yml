@@ -3,7 +3,7 @@ version: 2.1
 executors:
   kernel-exec:
     docker:
-      - image: cimg/base:stable     # Ubuntu 20.04
+      - image: cimg/base:stable          # Ubuntu 20.04
         user: root
     environment:
       DEBIAN_FRONTEND: noninteractive
@@ -16,50 +16,57 @@ jobs:
       # 0) 소스
       - checkout
 
-      # 1) 호스트 의존 패키지
+      # 1) Host 패키지
       - run:
-          name: Host prerequisites
+          name: Install host prerequisites
           command: |
             apt-get update -y
             apt-get install -y \
               build-essential bc git curl python-is-python3 \
-              lz4 cpio flex bison zstd libncurses-dev libssl-dev
+              lz4 cpio flex bison zstd \
+              libncurses-dev libssl-dev
 
-      # 2) Linaro 2023.09 binutils / gcc (framework 만 필요)
+      # 2) Linaro cross‑binutils (13.2‑2023.09)
       - run:
-          name: Get Linaro cross‑binutils (2023.09)
+          name: Get Linaro cross‑binutils
           command: |
             set -eux
             BASE=https://releases.linaro.org/components/toolchain/binaries/13.2-2023.09
-            mkdir -p $HOME/.tc
-            curl -sL $BASE/aarch64-linux-gnu/gcc-linaro-13.2.1-2023.09-x86_64_aarch64-linux-gnu.tar.xz \
-                 | tar -xJ -C $HOME/.tc
-            curl -sL $BASE/arm-linux-gnueabihf/gcc-linaro-13.2.1-2023.09-x86_64_arm-linux-gnueabihf.tar.xz \
-                 | tar -xJ -C $HOME/.tc
+            DST=$HOME/.tc
+            mkdir -p "$DST"
 
-            echo 'export PATH=$HOME/.tc/gcc-linaro-13.2.1-2023.09-x86_64_aarch64-linux-gnu/bin:$HOME/.tc/gcc-linaro-13.2.1-2023.09-x86_64_arm-linux-gnueabihf/bin:$PATH' >> $BASH_ENV
+            # aarch64‑linux‑gnu
+            curl -sL "$BASE/aarch64-linux-gnu/gcc-linaro-13.2.1-2023.09-x86_64_aarch64-linux-gnu.tar.xz" \
+              | tar -xJf - -C "$DST"
 
-      # 3) Neutron‑Clang (stable) + glibc patch
+            # arm‑linux‑gnueabihf
+            curl -sL "$BASE/arm-linux-gnueabihf/gcc-linaro-13.2.1-2023.09-x86_64_arm-linux-gnueabihf.tar.xz" \
+              | tar -xJf - -C "$DST"
+
+            echo 'export PATH=$HOME/.tc/gcc-linaro-13.2.1-2023.09-x86_64_aarch64-linux-gnu/bin:$HOME/.tc/gcc-linaro-13.2.1-2023.09-x86_64_arm-linux-gnueabihf/bin:$PATH' >> "$BASH_ENV"
+
+      # 3) Neutron‑Clang
       - run:
           name: Fetch Neutron‑Clang
           command: |
             set -eux
             TC=$HOME/toolchains/neutron-clang
-            mkdir -p $TC && cd $TC
+            mkdir -p "$TC" && cd "$TC"
             curl -sL https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman -o antman
             chmod +x antman
             ./antman -S stable
             ./antman --patch=glibc
-            echo "export PATH=$TC/bin:\$PATH" >> $BASH_ENV
+            echo "export PATH=$TC/bin:\$PATH" >> "$BASH_ENV"
 
-      # 4) 커널 빌드
+      # 4) 커널 빌드
       - run:
-          name: Build Galaxy S20+ kernel
+          name: Build Galaxy S20+ kernel
           command: |
             set -eux
-            source $BASH_ENV
+            source "$BASH_ENV"
+
             OUT=$PWD/out
-            N=$(nproc)
+            NCPU=$(nproc)
 
             # defconfig
             make O=$OUT \
@@ -71,7 +78,7 @@ jobs:
                  vendor/y2q_kor_singlex_defconfig
 
             # full build
-            make -j$N O=$OUT \
+            make -j$NCPU O=$OUT \
                  ARCH=arm64 LLVM=1 LLVM_IAS=1 \
                  CC=clang LD=ld.lld \
                  CLANG_TRIPLE=aarch64-linux-gnu- \
@@ -79,7 +86,7 @@ jobs:
                  CROSS_COMPILE_COMPAT=arm-linux-gnueabihf- \
                  HOSTCC=gcc HOSTCXX=g++
 
-      # 5) 결과물
+      # 5) 아티팩트
       - store_artifacts:
           path: out/arch/arm64/boot/Image.gz-dtb
           destination: kernel-image
