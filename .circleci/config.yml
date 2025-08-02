@@ -3,59 +3,52 @@ version: 2.1
 executors:
   kernel-exec:
     docker:
-      - image: cimg/base:stable-22.04     # ← Jammy (binutils‑2.38)
+      # Ubuntu 22.04 LTS + 최신 cimg 툴체인 (binutils 2.38, GCC 12…)
+      - image: cimg/base:stable        # 또는 :2024.05 등
         user: root
     environment:
       DEBIAN_FRONTEND: noninteractive
-      TZ:   Etc/UTC
+      TZ: Etc/UTC
 
 jobs:
   build-kernel:
     executor: kernel-exec
     steps:
-      # 0. 소스
+      # 0) 소스 가져오기
       - checkout
 
-      # 1. 호스트 빌드 도구
+      # 1) 호스트‑빌드 의존성 설치
       - run:
           name: Install host‑side prerequisites
           command: |
             apt-get update -y
             apt-get install -y \
               build-essential bc git curl python-is-python3 \
-              lz4 cpio flex bison zstd libncurses-dev libssl-dev
+              lz4 cpio flex bison zstd \
+              libncurses-dev libssl-dev \
+              binutils-aarch64-linux-gnu binutils-arm-linux-gnueabihf
 
-      # 2. 크로스 binutils (22.04 repo 는 이미 2.38!)
-      - run:
-          name: Install cross‑binutils/gcc (Jammy)
-          command: |
-            apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-                               gcc-arm-linux-gnueabihf binutils-arm-linux-gnueabihf
-
-      # 3. Neutron‑Clang + 휴대용 glibc 2.38
+      # 2) Neutron‑Clang (LLVM 17 계열) + 휴대용 glibc 2.38
       - run:
           name: Fetch Neutron‑Clang toolchain
           command: |
             set -eux
-            TC="$HOME/toolchains/neutron-clang"
-            mkdir -p "$TC" && cd "$TC"
+            TC_DIR="$HOME/toolchains/neutron-clang"
+            mkdir -p "$TC_DIR" && cd "$TC_DIR"
             curl -sL https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman -o antman
             chmod +x antman
-            ./antman -S stable          # Clang/LLVM/LLD 17.x
-            ./antman --patch=glibc      # portable glibc 2.38
-            echo "export PATH=$TC/bin:\$PATH" >> "$BASH_ENV"
+            ./antman -S stable
+            ./antman --patch=glibc
+            echo "export PATH=$TC_DIR/bin:\$PATH" >> "$BASH_ENV"
 
-      # 4. 커널 빌드
+      # 3) 커널 빌드
       - run:
-          name: Build Galaxy S20+ (y2q) kernel
+          name: Build Galaxy S20+ (y2q) kernel
           command: |
             set -eux
             source "$BASH_ENV"
 
             OUT=$PWD/out
-            NPROC=$(nproc)
-
-            # ── ① defconfig
             make O=$OUT \
                  ARCH=arm64 LLVM=1 LLVM_IAS=1 \
                  CC=clang LD=ld.lld \
@@ -64,8 +57,7 @@ jobs:
                  CROSS_COMPILE_COMPAT=arm-linux-gnueabihf- \
                  vendor/y2q_kor_singlex_defconfig
 
-            # ── ② full build  (host gcc 사용)
-            make -j$NPROC O=$OUT \
+            make -j"$(nproc)" O=$OUT \
                  ARCH=arm64 LLVM=1 LLVM_IAS=1 \
                  CC=clang LD=ld.lld \
                  CLANG_TRIPLE=aarch64-linux-gnu- \
@@ -73,13 +65,12 @@ jobs:
                  CROSS_COMPILE_COMPAT=arm-linux-gnueabihf- \
                  HOSTCC=gcc HOSTCXX=g++
 
-      # 5. 산출물
+      # 4) 바이너리 보존
       - store_artifacts:
           path:       out/arch/arm64/boot/Image.gz-dtb
           destination: kernel-image
 
 workflows:
-  version: 2
   build-and-store:
     jobs:
       - build-kernel
