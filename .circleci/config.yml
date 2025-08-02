@@ -1,14 +1,13 @@
-# .circleci/config.yml
 version: 2.1
 
 executors:
   kernel-exec:
     docker:
       - image: cimg/base:stable
-        user: root                    # apt 를 root 로 직접 실행
+        user: root
     environment:
       DEBIAN_FRONTEND: noninteractive
-      TZ:   Etc/UTC
+      TZ: Etc/UTC
 
 jobs:
   build-kernel:
@@ -16,65 +15,54 @@ jobs:
     steps:
       - checkout
 
-      # ─────────────────────────────────────────────────────────────
       # 1. 필수 패키지
-      # ─────────────────────────────────────────────────────────────
       - run:
           name: Install build prerequisites
           command: |
-            apt-get update
+            apt-get update -y
             apt-get install -y \
               build-essential bc git curl python3 lz4 cpio flex bison zstd rsync \
               libncurses-dev libssl-dev \
               gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
               binutils-arm-linux-gnueabi
 
-      # ─────────────────────────────────────────────────────────────
-      # 2. Neutron‑Clang + GLIBC patch (antman)
-      # ─────────────────────────────────────────────────────────────
+      # 2. Neutron‑Clang + GLIBC 패치
       - run:
-          name: Fetch toolchain & portable GLIBC
+          name: Fetch Neutron‑Clang (with portable glibc)
           command: |
             set -eux
-            TC_DIR="$HOME/toolchains/neutron-clang"
-            mkdir -p "$TC_DIR" && cd "$TC_DIR"
+            TC="$HOME/toolchains/neutron-clang"
+            mkdir -p "$TC" && cd "$TC"
             curl -sL https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman -o antman
             chmod +x antman
-            ./antman -S stable          # 본체
-            ./antman --patch=glibc      # libc 2.38 포팅
+            ./antman -S stable
+            ./antman --patch=glibc
             echo 'export PATH=$HOME/toolchains/neutron-clang/bin:$PATH' >> "$BASH_ENV"
 
-      # ─────────────────────────────────────────────────────────────
-      # 3. 커널  빌드  (변수는 ★반드시★ make 명령행에 직접 전달)
-      # ─────────────────────────────────────────────────────────────
+      # 3. 커널 빌드
       - run:
-          name: Build y2q kernel
+          name: Build Galaxy S20+ (y2q) kernel
           command: |
             set -eux
             source "$BASH_ENV"
-      
-            # aarch64‑binutils 들을 PATH 맨 앞에 두기
-            export PATH="/usr/aarch64-linux-gnu/bin:$PATH"
-      
-            OUT=$PWD/out
-      
-            # ── ① defconfig ───────────────────────────
-            make -C $PWD O="$OUT" \
+
+            OUT_DIR=$PWD/out
+
+            # --- ① defconfig -------------------------------------------------
+            make -C $PWD O="$OUT_DIR" \
                  ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang \
                  CROSS_COMPILE=aarch64-linux-gnu- \
                  CLANG_TRIPLE=aarch64-linux-gnu- \
                  vendor/y2q_kor_singlex_defconfig
-      
-            # ── ② full build ──────────────────────────
-            make -C $PWD -j"$(nproc)" O="$OUT" \
+
+            # --- ② full build -----------------------------------------------
+            make -C $PWD -j"$(nproc)" O="$OUT_DIR" \
                  ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang \
                  CROSS_COMPILE=aarch64-linux-gnu- \
                  CLANG_TRIPLE=aarch64-linux-gnu- \
                  HOSTCC=gcc HOSTCXX=g++
 
-      # ─────────────────────────────────────────────────────────────
-      # 4. 결과물  보존
-      # ─────────────────────────────────────────────────────────────
+      # 4. 결과물 저장
       - store_artifacts:
           path:     out/arch/arm64/boot/Image.gz-dtb
           destination: kernel-image
@@ -84,6 +72,3 @@ workflows:
   build-and-store:
     jobs:
       - build-kernel
-
-
-
