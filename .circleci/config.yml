@@ -52,18 +52,24 @@ jobs:
           command: |
             set -eux
             source "$BASH_ENV"
+      
+            # aarch64‑binutils 들을 PATH 맨 앞에 두기
+            export PATH="/usr/aarch64-linux-gnu/bin:$PATH"
+      
             OUT=$PWD/out
       
-            # ① defconfig
+            # ── ① defconfig ───────────────────────────
             make -C $PWD O="$OUT" \
                  ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang \
                  CROSS_COMPILE=aarch64-linux-gnu- \
+                 CLANG_TRIPLE=aarch64-linux-gnu- \
                  vendor/y2q_kor_singlex_defconfig
       
-            # ② 전체 빌드
+            # ── ② full build ──────────────────────────
             make -C $PWD -j"$(nproc)" O="$OUT" \
                  ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang \
                  CROSS_COMPILE=aarch64-linux-gnu- \
+                 CLANG_TRIPLE=aarch64-linux-gnu- \
                  HOSTCC=gcc HOSTCXX=g++
 
       # ─────────────────────────────────────────────────────────────
@@ -78,5 +84,6 @@ workflows:
   build-and-store:
     jobs:
       - build-kernel
+
 
 
