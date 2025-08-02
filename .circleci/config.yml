@@ -21,10 +21,10 @@ jobs:
           command: |
             apt-get update -y
             apt-get install -y \
-              build-essential bc git curl lz4 cpio flex bison zstd rsync \
-              libncurses-dev libssl-dev python-is-python3 \
-              gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
-              gcc-arm-linux-gnueabi g++-arm-linux-gnueabi
+              build-essential bc git curl python3 python-is-python3 \
+              lz4 cpio flex bison zstd rsync \
+              libncurses-dev libssl-dev \
+              binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi
 
       # ───────────────── 2. Neutron‑Clang + 휴대용 GLIBC ────────────────
       - run:
@@ -41,26 +41,29 @@ jobs:
 
       # ───────────────────── 3. 커널 빌드 (one‑shot) ─────────────────────
       - run:
-          name: Build y2q kernel
+          name: Build kernel
           command: |
             set -eux
             source "$BASH_ENV"
-
-            # sanity check – cross‑gcc 존재 여부
-            which aarch64-linux-gnu-gcc
-            which arm-linux-gnueabi-gcc
-
+      
+            # --- 크로스 binutils를 가장 앞에 배치 ------------------
+            export PATH="/usr/aarch64-linux-gnu/bin:/usr/arm-linux-gnueabi/bin:$PATH"
+      
             OUT=$PWD/out
-            make O=$OUT ARCH=arm64 LLVM=1 LLVM_IAS=1 \
-                 CC=clang LD=ld.lld \
-                 CROSS_COMPILE=aarch64-linux-gnu- \
-                 CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
+            CROSS_COMPILE=aarch64-linux-gnu-
+            CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
+      
+            # 1) defconfig
+            make O=$OUT \
+                 ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang LD=ld.lld \
+                 CROSS_COMPILE=$CROSS_COMPILE \
                  vendor/y2q_kor_singlex_defconfig
-
-            make -j"$(nproc)" O=$OUT ARCH=arm64 LLVM=1 LLVM_IAS=1 \
-                 CC=clang LD=ld.lld \
-                 CROSS_COMPILE=aarch64-linux-gnu- \
-                 CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
+      
+            # 2) full build
+            make -j"$(nproc)" O=$OUT \
+                 ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang LD=ld.lld \
+                 CROSS_COMPILE=$CROSS_COMPILE \
+                 CROSS_COMPILE_COMPAT=$CROSS_COMPILE_COMPAT \
                  HOSTCC=gcc HOSTCXX=g++
 
       # ───────────────────────── 4. 결과물 ─────────────────────────────
@@ -73,3 +76,4 @@ workflows:
   build-and-store:
     jobs:
       - build-kernel
+
