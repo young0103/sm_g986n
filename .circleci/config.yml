@@ -4,7 +4,7 @@ version: 2.1
 executors:
   kernel-exec:
     docker:
-      - image: cimg/base:stable      # Ubuntu 20.04 LTS
+      - image: cimg/base:stable        # Ubuntu 20.04 LTS
         user: root
     environment:
       DEBIAN_FRONTEND: noninteractive
@@ -16,64 +16,58 @@ jobs:
     steps:
       - checkout
 
-      # ────────────────────────────────────────
-      # 1) 필수 패키지 설치
-      # ────────────────────────────────────────
+      # ─────────────────────────────── 1. 필수 패키지 ───────────────────────────────
       - run:
-          name: Install prerequisites
+          name: Install build prerequisites
           command: |
             apt-get update -y
             apt-get install -y \
-              build-essential bc git curl python-is-python3 \
+              build-essential bc curl git python-is-python3 \
               lz4 cpio flex bison zstd \
               libncurses-dev libssl-dev \
               gcc-aarch64-linux-gnu  binutils-aarch64-linux-gnu \
               gcc-arm-linux-gnueabi  binutils-arm-linux-gnueabi
 
-      # ────────────────────────────────────────
-      # 2) Neutron‑Clang + glibc 2.38 패치
-      # ────────────────────────────────────────
+      # ─────────────────────────────── 2. Neutron‑Clang ───────────────────────────────
       - run:
-          name: Fetch Neutron‑Clang toolchain
+          name: Fetch Neutron‑Clang (with portable glibc 2.38)
           command: |
             set -eux
-            TC_DIR="$HOME/toolchains/neutron-clang"
-            mkdir -p "$TC_DIR" && cd "$TC_DIR"
-
+            TC="$HOME/toolchains/neutron-clang"
+            mkdir -p "$TC" && cd "$TC"
             curl -sL https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman -o antman
             chmod +x antman
+            ./antman -S stable
+            ./antman --patch=glibc              # glibc 2.38 포함
+            echo "export PATH=$TC/bin:\$PATH" >> "$BASH_ENV"
 
-            ./antman -S stable          # 클랭 + LLVM binutils
-            ./antman --patch=glibc      # 휴대용 glibc 2.38 추가
-
-            echo "export PATH=$TC_DIR/bin:\$PATH" >> "$BASH_ENV"
-
-      # ────────────────────────────────────────
-      # 3) 커널 빌드 (make 호출마다 변수 직접 지정)
-      # ────────────────────────────────────────
+      # ─────────────────────────────── 3. 커널 빌드 ───────────────────────────────
       - run:
-          name: Build Galaxy S20+ kernel
+          name: Build Galaxy S20+ (y2q) kernel
           command: |
             set -eux
             source "$BASH_ENV"
 
-            # ① ARM cross‑binutils를 PATH 맨 앞에
-            export PATH="/usr/aarch64-linux-gnu/bin:/usr/arm-linux-gnueabi/bin:$PATH"
+            OUT="$PWD/out"
 
-            OUT=$PWD/out
-            MFLAGS="O=$OUT ARCH=arm64 LLVM=1 LLVM_IAS=1 \
-                    CC=clang LD=ld.lld CLANG_TRIPLE=aarch64-linux-gnu- \
-                    CROSS_COMPILE=aarch64-linux-gnu- \
-                    CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
-                    HOSTCC=gcc HOSTCXX=g++"
+            # Make 에 건네줄 공통 플래그(한 줄 선언 방식만 사용)
+            MF="O=$OUT ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+                CC=clang LD=ld.lld CLANG_TRIPLE=aarch64-linux-gnu- \
+                CROSS_COMPILE=aarch64-linux-gnu- \
+                CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
+                AS=aarch64-linux-gnu-as \
+                HOSTCC=gcc HOSTCXX=g++"
 
-            make $MFLAGS mrproper
-            make $MFLAGS vendor/y2q_kor_singlex_defconfig
-            make -j$(nproc) $MFLAGS
+            # ① 깨끗한 작업 디렉터리
+            make $MF mrproper
 
-      # ────────────────────────────────────────
-      # 4) 결과물 저장
-      # ────────────────────────────────────────
+            # ② defconfig
+            make $MF vendor/y2q_kor_singlex_defconfig
+
+            # ③ 풀 빌드
+            make -j"$(nproc)" $MF
+
+      # ─────────────────────────────── 4. 결과물 보존 ───────────────────────────────
       - store_artifacts:
           path:       out/arch/arm64/boot/Image.gz-dtb
           destination: kernel-image
@@ -83,4 +77,3 @@ workflows:
   build-and-store:
     jobs:
       - build-kernel
-
