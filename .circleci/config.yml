@@ -52,24 +52,31 @@ jobs:
           command: |
             set -eux
             source "$BASH_ENV"
-            OUT_DIR="$PWD/out"
 
-            # 3‑1) defconfig
-            make \
-              O="$OUT_DIR" \
-              ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang \
-              CROSS_COMPILE=aarch64-linux-gnu- \
-              CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
-              CLANG_TRIPLE=aarch64-linux-gnu- \
-              vendor/y2q_kor_singlex_defconfig
+            # 교차 binutils 경로(패키지 설치 시 /usr/bin 에 이미 존재하지만,
+            #   안전하게 toolchain 디렉터리를 PATH 맨 앞에 추가)
+            export PATH="$HOME/toolchains/neutron-clang/bin:/usr/aarch64-linux-gnu/bin:$PATH"
 
-            # 3‑2) 실제 컴파일
-            make -j"$(nproc)" \
-              O="$OUT_DIR" \
-              ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang \
-              CROSS_COMPILE=aarch64-linux-gnu- \
-              CROSS_COMPILE_COMPAT=arm-linux-gnueabi- \
-              CLANG_TRIPLE=aarch64-linux-gnu-
+            OUT=$PWD/out
+
+            # ★ 1단계 defconfig
+            make -C $PWD O="$OUT" \
+                 ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang \
+                 CROSS_COMPILE=aarch64-linux-gnu- \
+                 AS=aarch64-linux-gnu-as \
+                 CLANG_TRIPLE=aarch64-linux-gnu- \
+                 vendor/y2q_kor_singlex_defconfig
+
+            # ★ 2단계 빌드
+            make -C $PWD -j"$(nproc)" O="$OUT" \
+                 ARCH=arm64 LLVM=1 LLVM_IAS=1 CC=clang \
+                 CROSS_COMPILE=aarch64-linux-gnu- \
+                 AS=aarch64-linux-gnu-as \
+                 AR=aarch64-linux-gnu-gcc-ar \
+                 NM=aarch64-linux-gnu-nm \
+                 OBJDUMP=aarch64-linux-gnu-objdump \
+                 STRIP=aarch64-linux-gnu-strip \
+                 HOSTCC=gcc HOSTCXX=g++
 
       # ─────────────────────────────────────────────────────────────
       # 4. 결과물  보존
@@ -83,3 +90,4 @@ workflows:
   build-and-store:
     jobs:
       - build-kernel
+
