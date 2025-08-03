@@ -1,10 +1,9 @@
-# .circleci/config.yml (요약)
 version: 2.1
 
 executors:
   kernel-exec:
     docker:
-      - image: cimg/base:stable          # Ubuntu 20.04
+      - image: cimg/base:stable   # Ubuntu 20.04
         user: root
     environment:
       DEBIAN_FRONTEND: noninteractive
@@ -14,43 +13,60 @@ jobs:
   build-kernel:
     executor: kernel-exec
     steps:
+      # 0. 소스
       - checkout
-      - run: |
-          apt-get update -y
-          apt-get install -y \
-            build-essential bc git curl python-is-python3 \
-            lz4 cpio flex bison zstd \
-            libncurses-dev libssl-dev \
-            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
-      - run: |
-          set -eux
-          TC=$HOME/toolchains/neutron-clang
-          mkdir -p "$TC" && cd "$TC"
-          curl -sL https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman -o antman
-          chmod +x antman
-          ./antman -S stable
-          ./antman --patch=glibc
-          echo "export PATH=$TC/bin:\$PATH" >> "$BASH_ENV"
-      - run: |
-          set -eux
-          source "$BASH_ENV"
-          OUT=$PWD/out
-          NPROC=$(nproc)
 
-          # ① defconfig
-          make O=$OUT \
-               ARCH=arm64 LLVM=1 LLVM_IAS=1 \
-               CC=clang LD=ld.lld \
-               CROSS_COMPILE=aarch64-linux-gnu- \
-               vendor/y2q_kor_singlex_defconfig
+      # 1. 호스트 의존 패키지 + aarch64 binutils
+      - run:
+          name: Install prerequisites
+          command: |
+            apt-get update -y
+            apt-get install -y \
+              build-essential bc git curl python-is-python3 \
+              lz4 cpio flex bison zstd \
+              libncurses-dev libssl-dev \
+              binutils-aarch64-linux-gnu
 
-          # ② 전체 빌드
-          make -j$NPROC O=$OUT \
-               ARCH=arm64 LLVM=1 LLVM_IAS=1 \
-               CC=clang LD=ld.lld \
-               CROSS_COMPILE=aarch64-linux-gnu- \
-               HOSTCC=gcc HOSTCXX=g++
+      # 2. Neutron‑Clang (+ glibc 2.38 patch)
+      - run:
+          name: Fetch Neutron‑Clang
+          command: |
+            set -eux
+            TC=$HOME/toolchains/neutron-clang
+            mkdir -p "$TC" && cd "$TC"
+            curl -sL https://raw.githubusercontent.com/Neutron-Toolchains/antman/main/antman -o antman
+            chmod +x antman
+            ./antman -S stable
+            ./antman --patch=glibc
+            echo "export PATH=$TC/bin:\$PATH" >> "$BASH_ENV"
 
+      # 3. 커널 빌드 (모든 변수는 make 라인에 직접 기입)
+      - run:
+          name: Build Galaxy S20+ (y2q) kernel
+          command: |
+            set -eux
+            source "$BASH_ENV"
+
+            OUT=$PWD/out
+            NPROC=$(nproc)
+
+            # ── ① defconfig
+            make O=$OUT \
+                 ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+                 CC=clang LD=ld.lld \
+                 CROSS_COMPILE=aarch64-linux-gnu- \
+                 AS=aarch64-linux-gnu-as \
+                 vendor/y2q_kor_singlex_defconfig
+
+            # ── ② 풀 빌드
+            make -j$NPROC O=$OUT \
+                 ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+                 CC=clang LD=ld.lld \
+                 CROSS_COMPILE=aarch64-linux-gnu- \
+                 AS=aarch64-linux-gnu-as \
+                 HOSTCC=gcc HOSTCXX=g++
+
+      # 4. 산출물 저장
       - store_artifacts:
           path: out/arch/arm64/boot/Image.gz-dtb
           destination: kernel-image
